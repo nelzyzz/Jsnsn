@@ -1,91 +1,106 @@
-const express = require('express');
-const bodyParser = require('body-parser');
+// index.js
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const { PAGE_ACCESS_TOKEN } = require('./config');
+
+const FB_API_URL = 'https://graph.facebook.com/v11.0/me/messages';
+
+// Function to load commands dynamically from the commands folder
+function loadCommands() {
+    const commandsDir = path.join(__dirname, 'commands');
+    const commands = [];
+
+    // Read all files in the commands directory
+    fs.readdirSync(commandsDir).forEach(file => {
+        const command = require(path.join(commandsDir, file));
+        commands.push(command);
+    });
+
+    return commands;
+}
+
+// Function to generate the menu text based on loaded commands
+function generateMenuText(commands) {
+    let menuText = "📜 **Available Commands**:\n\n";
+
+    commands.forEach(command => {
+        menuText += `🔹 **${command.name}** - ${command.description}\n`;
+    });
+
+    menuText += `\n\n📘 **Guide**:\n`;
+    commands.forEach(command => {
+        menuText += `🔸 ${command.usage}\n`;
+    });
+
+    return menuText;
+}
+
+// Function to send a message to the user
+async function sendMessage(recipientId, text) {
+    await axios.post(
+        FB_API_URL,
+        {
+            recipient: { id: recipientId },
+            message: { text: text }
+        },
+        {
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${PAGE_ACCESS_TOKEN}`
+            }
+        }
+    );
+}
+
+// Function to handle the menu command
+async function handleMenuCommand(recipientId) {
+    const commands = loadCommands();
+    const menuText = generateMenuText(commands);
+
+    // Send the generated menu text to the user
+    await sendMessage(recipientId, menuText);
+}
+
+// Example of handling incoming messages and checking if it's a "menu" command
+async function handleMessage(event) {
+    const senderId = event.sender.id;
+    const message = event.message.text.trim();
+
+    if (message.toLowerCase() === 'menu') {
+        // If the user typed "menu", generate and send the menu
+        await handleMenuCommand(senderId);
+    } else {
+        // Find and execute the specific command if available
+        const commands = loadCommands();
+        const [commandName, ...args] = message.split(' ');
+        const command = commands.find(cmd => cmd.name === commandName.toLowerCase());
+
+        if (command) {
+            await command.execute(senderId, args);
+        } else {
+            await sendMessage(senderId, "Unknown command. Type 'menu' to see available commands.");
+        }
+    }
+}
+
+// Messenger Webhook Endpoint (Express app is required to receive messages)
+const express = require('express');
+const bodyParser = require('body-parser');
 
 const app = express();
 app.use(bodyParser.json());
 
-const FB_API_URL = 'https://graph.facebook.com/v11.0/me/messages';
-
-// Function to send a message to the user
-async function sendMessage(recipientId, message) {
-    await axios.post(
-        FB_API_URL,
-        {
-            recipient: { id: recipientId },
-            message: message
-        },
-        {
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${PAGE_ACCESS_TOKEN}`
-            }
-        }
-    );
-}
-
-// Function to handle the "Get Started" payload
-async function handleGetStarted(recipientId) {
-    // Step 1: Send the image
-    const imageMessage = {
-        attachment: {
-            type: "image",
-            payload: {
-                url: "https://your-image-url.com/image.jpg", // Replace with your image URL
-                is_reusable: true
-            }
-        }
-    };
-    await sendMessage(recipientId, imageMessage);
-
-    // Step 2: Send the text message with a grey background effect
-    const textMessage = {
-        text: "Welcome to our Messenger Bot! We're here to help you get started. Type 'menu' to see available commands.",
-        quick_replies: [
-            {
-                content_type: "text",
-                title: "Menu",
-                payload: "MENU"
-            }
-        ]
-    };
-    await sendMessage(recipientId, textMessage);
-}
-
-// Auto-seen functionality
-async function markSeen(recipientId) {
-    await axios.post(
-        FB_API_URL,
-        {
-            recipient: { id: recipientId },
-            sender_action: "mark_seen"
-        },
-        {
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${PAGE_ACCESS_TOKEN}`
-            }
-        }
-    );
-}
-
-// Handle incoming messages
+// Webhook endpoint to handle incoming requests
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
     if (body.object === 'page') {
         body.entry.forEach(async function(entry) {
             const event = entry.messaging[0];
-            const senderId = event.sender.id;
-
-            // Automatically mark message as "seen"
-            await markSeen(senderId);
-
-            if (event.postback && event.postback.payload === 'GET_STARTED') {
-                await handleGetStarted(senderId);
+            if (event.message && event.message.text) {
+                await handleMessage(event);
             }
-            // Handle other commands like "menu" here
         });
 
         res.status(200).send('EVENT_RECEIVED');
@@ -94,9 +109,9 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// Webhook verification (required by Facebook)
+// Webhook verification endpoint
 app.get('/webhook', (req, res) => {
-    const VERIFY_TOKEN = 'pagebot';
+    const VERIFY_TOKEN = 'YOUR_VERIFY_TOKEN';
 
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -109,7 +124,6 @@ app.get('/webhook', (req, res) => {
     }
 });
 
-// Start the server
 app.listen(process.env.PORT || 3000, () => {
     console.log('Server is running on port', process.env.PORT || 3000);
 });
