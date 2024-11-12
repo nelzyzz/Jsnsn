@@ -111,7 +111,7 @@ app.post('/webhook', async (req, res) => {
 
 // Webhook verification endpoint
 app.get('/webhook', (req, res) => {
-    const VERIFY_TOKEN = 'YOUR_VERIFY_TOKEN';
+    const VERIFY_TOKEN = 'pagebot';
 
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
